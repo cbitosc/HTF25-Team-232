@@ -172,6 +172,8 @@ def check_signal_jump(detections: List[Dict[str, Any]],
     Red light jump:
     - traffic_light_state == "RED"
     - vehicle center is inside stop_line_polygon
+    
+    ✅ FIXED: Returns "red_light_jump" to match visualization code
     """
     events = []
     if traffic_light_state.upper() != "RED":
@@ -193,17 +195,19 @@ def check_signal_jump(detections: List[Dict[str, Any]],
         center = _bbox_center(obj.get("bbox",[0,0,0,0]))
         if _inside_polygon(center, stop_line_polygon):
             evt = {
-                "violation_type": "signal_jump",
+                "violation_type": "red_light_jump",  # ✅ FIXED: Changed from "signal_jump"
                 "track_id": int(obj.get("track_id", -1)),
                 "confidence": conf,
                 "timestamp_utc": _now_utc_iso(),
                 "details": {
                     "bbox": obj.get("bbox"),
+                    "class": clsname,
                     "traffic_light_state": traffic_light_state,
                     "center": center,
                 }
             }
             events.append(evt)
+            print(f"🚨 RED LIGHT VIOLATION: {clsname} (Track ID: {obj.get('track_id')}) at {center}")
 
     return events
 
@@ -224,10 +228,6 @@ def evaluate_frame(
     Returns: list of violation dicts.
     """
 
-    # Debug info (optional for tuning)
-    print(f"[rules] evaluating frame with {len(detections)} tracked objects")
-    print(f"[rules] traffic_light_state={traffic_light_state}")
-
     all_events = []
 
     # 1. Helmetless
@@ -238,7 +238,7 @@ def evaluate_frame(
     triple_events = check_triple_riding(detections, iou_threshold=0.3, min_people=3)
     all_events.extend(triple_events)
 
-    # 3. Signal jump
+    # 3. Signal jump (RED LIGHT VIOLATION)
     jump_events = check_signal_jump(
         detections,
         traffic_light_state=traffic_light_state,
@@ -247,12 +247,8 @@ def evaluate_frame(
     )
     all_events.extend(jump_events)
 
-    # You said: no overspeed, no wrong-lane. Skipped.
-
     # Optional: print what we found
     if all_events:
         print(f"[rules] violations found: {[e['violation_type'] for e in all_events]}")
-    else:
-        print("[rules] no violations this frame")
 
     return all_events

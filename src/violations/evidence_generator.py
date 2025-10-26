@@ -16,6 +16,7 @@ import time
 from typing import Dict, List, Tuple, Optional, Any
 
 from .event_schema import build_violation_record
+from .adapter import adapt_event_for_evidence
 
 
 # ============================================================
@@ -35,75 +36,176 @@ def _draw_event_overlay(frame, event: Dict[str, Any], color=(0, 0, 255)):
     Draws bounding boxes / text to make context.jpg understandable
     for humans / police during review.
 
-    We try to show:
-    - bike bbox for helmetless / triple_riding
-    - vehicle bbox for red_light_jump
-    - violation label text
+    ✅ ENHANCED: Now draws thick RED boxes and prominent labels
     """
     annotated = frame.copy()
 
-    label = event["type"].upper()
+    label = event["type"].upper().replace("_", " ")
+    
+    # ✅ Use THICK RED boxes for violations
+    violation_color = (0, 0, 255)  # BGR: Red
+    thickness = 4  # Thick boxes for evidence
 
     if event["type"] in ("helmetless", "triple_riding"):
         bbox = event.get("bike_bbox")
         if bbox:
             x1, y1, x2, y2 = map(int, bbox)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            
+            # ✅ Draw thick red rectangle
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), violation_color, thickness)
+            
+            # ✅ Draw semi-transparent red overlay
+            overlay = annotated.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), violation_color, -1)
+            cv2.addWeighted(overlay, 0.2, annotated, 0.8, 0, annotated)
+            
+            # ✅ Draw large warning label with background
+            label_text = f"⚠️ {label}"
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2
+            )
+            
+            # Background rectangle for text
+            cv2.rectangle(
+                annotated, 
+                (x1, y1 - text_height - 15), 
+                (x1 + text_width + 10, y1 - 5),
+                violation_color, 
+                -1
+            )
+            
+            # White text on red background
             cv2.putText(
                 annotated,
-                f"{label}",
-                (x1, y1 - 8),
+                label_text,
+                (x1 + 5, y1 - 10),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                color,
+                0.8,
+                (255, 255, 255),
                 2,
             )
 
-        # Optionally, mark riders
+        # ✅ Mark riders with smaller boxes
         riders = event.get("riders", [])
         for r in riders:
             rb = r.get("bbox")
             if rb:
                 rx1, ry1, rx2, ry2 = map(int, rb)
-                cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), (0, 255, 0), 2)
+                
+                # Green box for riders
+                rider_color = (0, 255, 0)
+                cv2.rectangle(annotated, (rx1, ry1), (rx2, ry2), rider_color, 2)
+                
                 helmet = r.get("helmet", None)
-                tag = "HELMET" if helmet else "NO HELMET" if helmet is False else "RIDER"
+                if helmet is False:
+                    tag = "NO HELMET"
+                    tag_color = (0, 0, 255)
+                elif helmet is True:
+                    tag = "HELMET"
+                    tag_color = (0, 255, 0)
+                else:
+                    tag = "RIDER"
+                    tag_color = (255, 255, 0)
+                
                 cv2.putText(
                     annotated,
                     tag,
                     (rx1, ry1 - 5),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.5,
-                    (0, 255, 0),
-                    1,
+                    tag_color,
+                    2,
                 )
 
-    elif event["type"] == "red_light_jump":
+    elif event["type"] in ("red_light_jump", "signal_jump"):
         bbox = event.get("vehicle_bbox")
         if bbox:
             x1, y1, x2, y2 = map(int, bbox)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+            
+            # ✅ Draw thick red rectangle
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), violation_color, thickness)
+            
+            # ✅ Draw semi-transparent red overlay
+            overlay = annotated.copy()
+            cv2.rectangle(overlay, (x1, y1), (x2, y2), violation_color, -1)
+            cv2.addWeighted(overlay, 0.2, annotated, 0.8, 0, annotated)
+            
+            # ✅ Draw large warning label with background
+            label_text = f"🚨 {label}"
+            vehicle_class = event.get("details", {}).get("class", "VEHICLE")
+            
+            (text_width, text_height), baseline = cv2.getTextSize(
+                label_text, cv2.FONT_HERSHEY_SIMPLEX, 0.9, 2
+            )
+            
+            # Background rectangle for text
+            cv2.rectangle(
+                annotated, 
+                (x1, y1 - text_height - 20), 
+                (x1 + text_width + 10, y1 - 5),
+                violation_color, 
+                -1
+            )
+            
+            # White text on red background
             cv2.putText(
                 annotated,
-                f"{label}",
-                (x1, y1 - 8),
+                label_text,
+                (x1 + 5, y1 - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.9,
+                (255, 255, 255),
+                2,
+            )
+            
+            # ✅ Add vehicle type label
+            cv2.putText(
+                annotated,
+                vehicle_class.upper(),
+                (x1, y2 + 20),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
-                color,
+                violation_color,
                 2,
             )
 
     else:
-        # fallback label only
+        # ✅ Fallback for unknown violation types
         cv2.putText(
             annotated,
-            f"{label}",
-            (20, 30),
+            f"⚠️ {label}",
+            (20, 40),
             cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            color,
-            2,
+            1.0,
+            violation_color,
+            3,
         )
+
+    # ✅ Add timestamp and confidence overlay
+    timestamp = event.get("timestamp_utc", "")
+    confidence = event.get("confidence", 0.0)
+    
+    info_text = f"Time: {timestamp[:19]} | Confidence: {confidence:.2%}"
+    cv2.putText(
+        annotated,
+        info_text,
+        (10, annotated.shape[0] - 20),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.5,
+        (255, 255, 255),
+        1,
+    )
+    
+    # ✅ Add "EVIDENCE" watermark
+    cv2.putText(
+        annotated,
+        "EVIDENCE",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.7,
+        (0, 0, 255),
+        2,
+    )
 
     return annotated
 
@@ -197,11 +299,14 @@ def save_violation_package(
         root output directory for all violations
     """
 
+    # ✅ FIXED: Convert event format from rules.py to evidence format
+    adapted_event = adapt_event_for_evidence(event)
+
     # 1. Draw annotated frame for context
-    annotated_frame = _draw_event_overlay(frame, event, color=(0, 0, 255))
+    annotated_frame = _draw_event_overlay(frame, adapted_event, color=(0, 0, 255))
 
     # 2. Try to crop plate (placeholder for now)
-    plate_crop_img = _extract_plate_crop(frame, event)
+    plate_crop_img = _extract_plate_crop(frame, adapted_event)
 
     # 3. We'll fill in media_paths AFTER we know violation_id and file paths
     media_paths = {
@@ -211,14 +316,15 @@ def save_violation_package(
     }
 
     # 4. Build the structured violation record (generates violation_id for us)
+    # ✅ FIXED: Use adapted_event["type"] instead of event["type"]
     violation_id, record = build_violation_record(
-        violation_type=event["type"],
+        violation_type=adapted_event["type"],
         camera_id=camera_id,
         location_name=location_name,
         plate_text=plate_text if plate_text else "UNREADABLE",
-        confidence=event.get("confidence", 0.9),
+        confidence=adapted_event.get("confidence", 0.9),
         media_paths=media_paths,
-        extra=event  # keep raw event info for explainability (bike bbox, riders, etc.)
+        extra=adapted_event  # keep adapted event info for explainability
     )
 
     # Make directory for this specific violation
@@ -254,4 +360,3 @@ def save_violation_package(
 
     # 11. Return record (this is what you can POST to backend)
     return record
-

@@ -423,21 +423,42 @@ def get_media(path: str = Query(..., description="Relative path to media file"))
     
     Returns the file with proper MIME type.
     """
-    # Handle both absolute and relative paths
-    if not os.path.isabs(path):
-        full_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", path))
-    else:
-        full_path = os.path.abspath(path)
+    # ✅ FIXED: Simplified path resolution
+    # Convert relative path to absolute, using project root as base
+    project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    
+    # Remove leading slashes if present
+    clean_path = path.lstrip("/\\")
+    
+    # Build full path
+    full_path = os.path.abspath(os.path.join(project_root, clean_path))
 
     # Security: restrict to output/violations only
-    if not full_path.startswith(os.path.abspath(VIOLATION_ROOT)):
-        raise HTTPException(status_code=403, detail="Access denied - path outside violations folder")
+    allowed_base = os.path.abspath(os.path.join(project_root, "output"))
+    if not full_path.startswith(allowed_base):
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Access denied - path must be within output/ folder"
+        )
 
+    # Check file exists
     if not os.path.exists(full_path):
-        raise HTTPException(status_code=404, detail=f"File not found: {path}")
+        raise HTTPException(
+            status_code=404, 
+            detail=f"File not found: {path}"
+        )
+    
+    # Check it's actually a file (not directory)
+    if not os.path.isfile(full_path):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Path is not a file: {path}"
+        )
 
     # Determine MIME type
     media_type = get_mime_type(full_path)
+    
+    print(f"📁 Serving media: {clean_path}")
     
     return FileResponse(full_path, media_type=media_type)
 
