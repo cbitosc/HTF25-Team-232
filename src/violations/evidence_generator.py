@@ -13,10 +13,36 @@ import cv2
 import json
 import shutil
 import time
+import numpy as np
 from typing import Dict, List, Tuple, Optional, Any
 
 from .event_schema import build_violation_record
 from .adapter import adapt_event_for_evidence
+
+
+# ============================================================
+# Helper: Convert numpy types to native Python types
+# ============================================================
+
+def to_serializable(obj):
+    """
+    Convert numpy/other non-JSON-serializable types to native Python types.
+    """
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
+        return int(obj)
+    if isinstance(obj, (np.floating, np.float64, np.float32)):
+        return float(obj)
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, dict):
+        return {k: to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_serializable(item) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(to_serializable(item) for item in obj)
+    if isinstance(obj, set):
+        return list(obj)
+    return obj
 
 
 # ============================================================
@@ -299,8 +325,14 @@ def save_violation_package(
         root output directory for all violations
     """
 
+    # ✅ Convert event to serializable format FIRST
+    event = to_serializable(event)
+
     # ✅ FIXED: Convert event format from rules.py to evidence format
     adapted_event = adapt_event_for_evidence(event)
+
+    # ✅ Convert adapted event to serializable format
+    adapted_event = to_serializable(adapted_event)
 
     # 1. Draw annotated frame for context
     annotated_frame = _draw_event_overlay(frame, adapted_event, color=(0, 0, 255))
@@ -316,7 +348,6 @@ def save_violation_package(
     }
 
     # 4. Build the structured violation record (generates violation_id for us)
-    # ✅ FIXED: Use adapted_event["type"] instead of event["type"]
     violation_id, record = build_violation_record(
         violation_type=adapted_event["type"],
         camera_id=camera_id,
@@ -350,10 +381,10 @@ def save_violation_package(
     record["media"]["plate_img"] = plate_path
     record["media"]["clip_video"] = clip_path
 
-    # 9. Save evidence.json
+    # 9. Save evidence.json (with custom JSON encoder for any remaining numpy types)
     json_path = os.path.join(vdir, "evidence.json")
     with open(json_path, "w") as jf:
-        json.dump(record, jf, indent=2)
+        json.dump(record, jf, indent=2, default=to_serializable)
 
     # 10. Debug log for you
     print(f"[EVIDENCE] Saved {violation_id} -> {vdir}")

@@ -48,33 +48,70 @@ def adapt_event_for_evidence(event: Dict[str, Any]) -> Dict[str, Any]:
     # Flatten details into main dict
     details = event.get("details", {})
     
-    # Map common detail fields
-    if "bbox" in details:
-        # Determine if it's a bike or vehicle violation
-        if adapted["type"] in ["helmetless", "triple_riding"]:
-            adapted["bike_bbox"] = details["bbox"]
-        elif adapted["type"] in ["red_light_jump", "signal_jump"]:
-            adapted["vehicle_bbox"] = details["bbox"]
-        else:
-            adapted["vehicle_bbox"] = details["bbox"]
+    # ✅ FIX: Properly map bbox based on violation type and class
+    violation_type = adapted["type"]
     
-    # Add rider information for relevant violations
-    if "rider_count" in details:
-        adapted["rider_count"] = details["rider_count"]
-    if "rider_ids" in details:
-        adapted["rider_ids"] = details["rider_ids"]
+    if "bbox" in details:
+        bbox = details["bbox"]
+        
+        # For helmetless: always use bike_bbox
+        if violation_type == "helmetless":
+            adapted["bike_bbox"] = bbox
+        
+        # For triple_riding: use bike_bbox from dedicated field
+        elif violation_type == "triple_riding":
+            # Triple riding has bike_bbox directly in details
+            adapted["bike_bbox"] = details.get("bike_bbox", bbox)
+        
+        # For red_light_jump/signal_jump: use vehicle_bbox
+        elif violation_type in ["red_light_jump", "signal_jump"]:
+            adapted["vehicle_bbox"] = bbox
+        
+        # Fallback: use vehicle_bbox for any other vehicle-related violation
+        else:
+            obj_class = details.get("class", "")
+            if obj_class == "person":
+                adapted["bike_bbox"] = bbox
+            else:
+                adapted["vehicle_bbox"] = bbox
+    
+    # ✅ FIX: Handle triple_riding specific fields
+    if violation_type == "triple_riding":
+        if "bike_bbox" in details:
+            adapted["bike_bbox"] = details["bike_bbox"]
+        if "rider_count" in details:
+            adapted["rider_count"] = details["rider_count"]
+        if "rider_ids" in details:
+            adapted["rider_ids"] = details["rider_ids"]
+        
+        # ✅ NEW: Build riders array with bbox info if available
+        if "rider_ids" in details:
+            # We need to reconstruct rider info from the original detections
+            # For now, create placeholder entries
+            adapted["riders"] = []
+            for rider_id in details["rider_ids"]:
+                adapted["riders"].append({
+                    "track_id": rider_id,
+                    "bbox": None,  # Will be filled by pipeline if needed
+                    "helmet": None
+                })
     
     # For helmetless violations, include helmet confidence
-    if "helmet_confidence" in details:
-        adapted["helmet_confidence"] = details["helmet_confidence"]
-    
-    # For triple riding, include riders array
-    if "riders" in details:
-        adapted["riders"] = details["riders"]
+    if violation_type == "helmetless":
+        if "helmet_confidence" in details:
+            adapted["helmet_confidence"] = details["helmet_confidence"]
+        
+        # ✅ NEW: Create riders array for helmetless (single rider)
+        adapted["riders"] = [{
+            "bbox": details.get("bbox"),
+            "helmet": False,  # We know it's False because it's helmetless
+            "helmet_confidence": details.get("helmet_confidence", 0.0)
+        }]
     
     # For signal jump, include traffic light state
-    if "traffic_light_state" in details:
-        adapted["traffic_light_state"] = details["traffic_light_state"]
+    if violation_type in ["red_light_jump", "signal_jump"]:
+        if "traffic_light_state" in details:
+            adapted["traffic_light_state"] = details["traffic_light_state"]
     
     # Keep original details as well (for debugging/explainability)
     adapted["details"] = details
@@ -150,6 +187,7 @@ if __name__ == "__main__":
     print(f"   type: {adapted['type']}")
     print(f"   track_id: {adapted['track_id']}")
     print(f"   bike_bbox: {adapted.get('bike_bbox')}")
+    print(f"   riders: {adapted.get('riders')}")
     print(f"   confidence: {adapted['confidence']}\n")
     
     # Test 2: Triple riding violation
@@ -169,18 +207,20 @@ if __name__ == "__main__":
     adapted2 = adapt_event_for_evidence(test_event_triple)
     print("✅ Adapted triple riding event:")
     print(f"   type: {adapted2['type']}")
+    print(f"   bike_bbox: {adapted2.get('bike_bbox')}")
     print(f"   rider_count: {adapted2.get('rider_count')}")
     print(f"   rider_ids: {adapted2.get('rider_ids')}\n")
     
     # Test 3: Signal jump violation
     print("Test 3: Signal jump violation")
     test_event_signal = {
-        "violation_type": "signal_jump",
+        "violation_type": "red_light_jump",
         "track_id": 88,
         "confidence": 0.95,
         "timestamp_utc": "2025-10-26T10:40:00Z",
         "details": {
             "bbox": [150, 250, 400, 450],
+            "class": "car",
             "traffic_light_state": "RED",
             "center": [275, 350]
         }

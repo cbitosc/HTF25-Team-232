@@ -20,6 +20,13 @@ from detection.helmet_classifier import HelmetClassifier
 from violations.rules import evaluate_frame
 from violations.evidence_generator import save_violation_package
 from backend.integration_helper import send_violation_to_backend, check_backend_health
+# Add this import at the top of run_video.py after the existing imports:
+
+from violations.evidence_generator import to_serializable
+
+# Or if you prefer, you can move the to_serializable function to run_video.py
+# by adding this function near the top of the file:
+
 
 # Output directories
 os.makedirs("output/debug_tracking/json", exist_ok=True)
@@ -31,14 +38,20 @@ def to_serializable(obj):
     Convert numpy types to plain Python types for JSON serialization.
     """
     import numpy as np
-
-    if isinstance(obj, (np.integer,)):
+    
+    if isinstance(obj, (np.integer, np.int64, np.int32)):
         return int(obj)
-    if isinstance(obj, (np.floating,)):
+    if isinstance(obj, (np.floating, np.float64, np.float32)):
         return float(obj)
-    if isinstance(obj, (np.ndarray,)):
+    if isinstance(obj, np.ndarray):
         return obj.tolist()
-    if isinstance(obj, (set,)):
+    if isinstance(obj, dict):
+        return {k: to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [to_serializable(item) for item in obj]
+    if isinstance(obj, tuple):
+        return tuple(to_serializable(item) for item in obj)
+    if isinstance(obj, set):
         return list(obj)
     return obj
 
