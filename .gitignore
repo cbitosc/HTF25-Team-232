@@ -1,0 +1,82 @@
+# -------------------------------
+# 🔧 Python & Virtual Env
+# -------------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pdb
+*.egg-info/
+venv/
+env/
+.yolo_env/
+.yolo/
+.yolov8/
+
+# -------------------------------
+# 🧠 Model Weights
+# -------------------------------
+# YOLO / Helmet classifier weights (large binary files)
+*.pt
+*.onnx
+*.pth
+*.weights
+
+# Keep empty models folder but ignore content
+src/detection/models/*
+!src/detection/models/.gitkeep
+
+# -------------------------------
+# 📸 Generated Outputs
+# -------------------------------
+output/
+runs/
+logs/
+*.mp4
+*.avi
+*.jpg
+*.png
+*.json
+*.csv
+*.txt
+
+# Keep structure for empty dirs if needed
+output/debug_tracking/video_overlays/*
+output/debug_tracking/json/*
+output/violations/*
+!output/.gitkeep
+
+# -------------------------------
+# 💻 IDE / Editor Stuff
+# -------------------------------
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# -------------------------------
+# 🧩 Datasets
+# -------------------------------
+data/raw/
+data/helmet_classifier_data/
+data/pascal_voc_helmet_dataset/
+data/images/
+data/labels/
+!data/.gitkeep
+
+# -------------------------------
+# 🔒 Credentials / Cache
+# -------------------------------
+*.log
+*.cache/
+*.tmp
+*.swp
+*.bak
+
+# -------------------------------
+# 🧰 Misc
+# -------------------------------
+*.zip
+*.tar
+*.gz
+*.7z
