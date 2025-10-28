@@ -1,14 +1,54 @@
 """
 Helper functions for pipeline team (Member 3) to send violations to backend
 Import this in src/pipeline/run_video.py
+
+This module now auto-detects which backend is running and adapts the
+payload accordingly to avoid 422 errors:
+- "app"    -> src/backend/app.py (expects ViolationIn with keys: type, media, ...)
+- "server" -> backend_server.py (expects ViolationCreate with keys: violation_type, details, media)
 """
 import requests
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from datetime import datetime
 import json
 
 # Backend URL (change if backend is on different host)
 BACKEND_URL = "http://localhost:8000"
+
+# Cached backend kind to avoid repeated detection calls
+_BACKEND_KIND: Optional[str] = None  # "app" | "server" | None
+
+
+def _detect_backend_kind() -> str:
+    """
+    Detect which backend is running by inspecting the root endpoint.
+    Returns: "server" for backend_server.py, "app" for src/backend/app.py
+    Fallback to "app" if uncertain (to preserve previous behavior).
+    """
+    global _BACKEND_KIND
+    if _BACKEND_KIND:
+        return _BACKEND_KIND
+
+    try:
+        resp = requests.get(f"{BACKEND_URL}/", timeout=2)
+        if resp.ok:
+            data = resp.json()
+            # Heuristics:
+            # backend_server.py returns keys: status, service: "Traffic Violations API", endpoints: {...}
+            # src/backend/app.py returns keys: status, service: settings.api_title ("AI Traffic Violation Backend"), violations_loaded, ...
+            service = str(data.get("service", ""))
+            endpoints = data.get("endpoints")
+            if endpoints or "Traffic Violations API" in service:
+                _BACKEND_KIND = "server"
+            else:
+                _BACKEND_KIND = "app"
+        else:
+            _BACKEND_KIND = "app"
+    except Exception:
+        # If detection fails (backend down), default to app to preserve legacy behavior
+        _BACKEND_KIND = "app"
+
+    return _BACKEND_KIND
 
 def check_backend_health() -> bool:
     """
@@ -82,31 +122,78 @@ def send_violation_to_backend(
     ```
     """
     try:
-        payload = {
-            "violation_id": violation_id,
-            "type": vtype,
-            "timestamp_utc": timestamp_utc,
-            "camera_id": camera_id,
-            "location": location,
-            "plate": plate,
-            "confidence": confidence,
-            "media": media_paths,
-            "extra": extra or {}
-        }
-        
-        response = requests.post(
-            f"{BACKEND_URL}/violations",
-            json=payload,
-            timeout=10
-        )
-        
-        if response.status_code == 200:
-            print(f"✅ Violation {violation_id} sent to backend")
-            return response.json()
+        backend_kind = _detect_backend_kind()
+
+        if backend_kind == "server":
+            # Map to backend_server.py schema (ViolationCreate)
+            # Extract best-available bbox from extra
+            details_bbox = None
+            if isinstance(extra, dict):
+                details_bbox = extra.get("bike_bbox") or extra.get("vehicle_bbox") or extra.get("bbox")
+            
+            payload = {
+                "violation_type": vtype,
+                "track_id": int((extra or {}).get("track_id", 0)),
+                "confidence": float(confidence),
+                "timestamp_utc": timestamp_utc,
+                "details": {
+                    "bbox": details_bbox,
+                    "camera_id": camera_id,
+                    "location": location,
+                    "plate": plate,
+                    # lat/lon can be added here if present in `extra`
+                    "lat": (extra or {}).get("lat"),
+                    "lon": (extra or {}).get("lon"),
+                },
+                "media": {
+                    "context_img": media_paths.get("context_img"),
+                    "crop_img": (extra or {}).get("crop_img"),
+                    "plate_img": media_paths.get("plate_img"),
+                    "clip_video": media_paths.get("clip_video"),
+                },
+                "status": "Pending",
+            }
+
+            response = requests.post(
+                f"{BACKEND_URL}/violations",
+                json=payload,
+                timeout=10
+            )
+
+            if response.status_code in (200, 201):
+                print(f"✅ Violation {violation_id} sent to backend_server")
+                return response.json()
+            else:
+                print(f"❌ Backend (server) error {response.status_code}: {response.text}")
+                return None
+
         else:
-            print(f"❌ Backend returned error {response.status_code}: {response.text}")
-            return None
-    
+            # Default: src/backend/app.py schema (ViolationIn)
+            payload = {
+                "violation_id": violation_id,
+                "type": vtype,
+                "timestamp_utc": timestamp_utc,
+                "camera_id": camera_id,
+                "location": location,
+                "plate": plate,
+                "confidence": confidence,
+                "media": media_paths,
+                "extra": extra or {}
+            }
+
+            response = requests.post(
+                f"{BACKEND_URL}/violations",
+                json=payload,
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                print(f"✅ Violation {violation_id} sent to backend app")
+                return response.json()
+            else:
+                print(f"❌ Backend (app) error {response.status_code}: {response.text}")
+                return None
+
     except requests.exceptions.Timeout:
         print(f"❌ Backend request timed out for {violation_id}")
         return None
